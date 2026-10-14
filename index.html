@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="かさなり帳">
+<meta name="theme-color" content="#0f6b62">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon-180.png">
+<title>かさなり帳</title>
+<style>
+:root{--bg:#f3f5f4;--sheet:#fff;--ink:#18221f;--sub:#5b6b66;--rule:#dbe2df;--acc:#0f6b62;--warn:#b4410f;--warnwash:#fbeae2;color-scheme:light;}
+@media (prefers-color-scheme:dark){:root{--bg:#101614;--sheet:#18201d;--ink:#e6eeeb;--sub:#9aaba5;--rule:#2a3532;--acc:#5cc8b8;--warn:#f08a5a;--warnwash:#3a2218;color-scheme:dark;}}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html,body{margin:0;background:var(--bg);color:var(--ink);font-family:"Hiragino Sans","Hiragino Kaku Gothic ProN",sans-serif;font-size:17px;line-height:1.5;}
+body{padding:env(safe-area-inset-top,0) 16px calc(100px + env(safe-area-inset-bottom,0));}
+.wrap{max-width:560px;margin:0 auto;}
+h1{font-size:22px;margin:16px 0 4px;}
+.num{font-variant-numeric:tabular-nums;}
+.day{margin:18px 0 4px;font-size:15px;color:var(--sub);font-weight:700;}
+.item{display:flex;gap:14px;align-items:baseline;width:100%;text-align:left;background:none;border:0;border-top:1px solid var(--rule);padding:14px 2px;font:inherit;color:inherit;cursor:pointer;min-height:52px;}
+.item .t{width:118px;flex:none;color:var(--sub);white-space:nowrap;}
+.empty{color:var(--sub);margin-top:24px;}
+.add{position:fixed;left:16px;right:16px;bottom:calc(16px + env(safe-area-inset-bottom,0));max-width:528px;margin:0 auto;min-height:56px;border:0;border-radius:12px;background:var(--acc);color:#fff;font:inherit;font-weight:700;font-size:18px;box-shadow:0 4px 14px rgba(0,0,0,.18);}
+.sheet{position:fixed;inset:0;background:rgba(10,16,14,.45);display:flex;align-items:flex-end;justify-content:center;z-index:9;}
+.panel{background:var(--sheet);width:100%;max-width:560px;border-radius:16px 16px 0 0;padding:20px 16px calc(20px + env(safe-area-inset-bottom,0));display:grid;gap:14px;max-height:92%;overflow:auto;}
+.panel h2{margin:0;font-size:20px;}
+label{display:grid;gap:4px;font-size:15px;color:var(--sub);}
+input{font:inherit;font-size:17px;color:var(--ink);background:var(--bg);border:1.5px solid var(--rule);border-radius:10px;padding:10px 12px;min-height:48px;width:100%;}
+.row{display:grid;grid-template-columns:1fr 1fr;gap:12px;}
+.acts{display:flex;gap:10px;}
+.btn{flex:1;min-height:52px;border-radius:10px;border:2px solid var(--acc);background:var(--acc);color:#fff;font:inherit;font-weight:700;cursor:pointer;}
+.btn.ghost{background:transparent;color:var(--acc);}
+.btn.del{border-color:var(--warn);background:transparent;color:var(--warn);}
+.err{color:var(--warn);font-weight:700;margin:0;}
+.clash{background:var(--warnwash);color:var(--warn);border-radius:12px;padding:14px;display:grid;gap:6px;}
+.clash b{font-size:18px;}
+.clash ul{margin:0;padding-left:1.2em;color:var(--ink);}
+button:focus-visible,input:focus-visible{outline:3px solid var(--warn);outline-offset:2px;}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>かさなり帳</h1>
+  <div id="list"></div>
+</div>
+<button class="add" id="addBtn" type="button">＋ 予定を入れる</button>
+
+<div class="sheet" id="sheet" hidden>
+  <form class="panel" id="form" novalidate>
+    <h2 id="formTitle">予定を入れる</h2>
+    <label>予定<input id="f-title" placeholder="例：歯医者" autocomplete="off"></label>
+    <label>日付<input id="f-date" type="date"></label>
+    <div class="row">
+      <label>はじまり<input id="f-start" type="time" step="300"></label>
+      <label>おわり<input id="f-end" type="time" step="300"></label>
+    </div>
+    <p class="err" id="err" hidden></p>
+    <div class="clash" id="clash" hidden></div>
+    <div class="acts" id="acts">
+      <button class="btn ghost" type="button" id="cancel">やめる</button>
+      <button class="btn" type="submit" id="save">入れる</button>
+    </div>
+    <button class="btn del" type="button" id="del" hidden>この予定を消す</button>
+  </form>
+</div>
+
+<script>
+const KEY = "kasanari-v1";
+const $ = id => document.getElementById(id);
+const pad = n => String(n).padStart(2, "0");
+const ymd = d => `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
+const WD = "日月火水木金土";
+const dayLabel = s => { const [y,m,d] = s.split("-").map(Number); return `${m}/${d}（${WD[new Date(y,m-1,d).getDay()]}）`; };
+const min = t => { const [h,m] = t.split(":").map(Number); return h*60+m; };
+const esc = s => String(s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+
+let events = [];
+try { events = JSON.parse(localStorage.getItem(KEY) || "[]"); } catch { events = []; }
+const store = () => { try { localStorage.setItem(KEY, JSON.stringify(events)); } catch {} };
+let editId = null;
+
+const overlaps = ev => events.filter(o => o.id !== ev.id && o.date === ev.date && min(ev.start) < min(o.end) && min(o.start) < min(ev.end));
+
+function render() {
+  const today = ymd(new Date());
+  const list = events.filter(e => e.date >= today).sort((a,b) => (a.date+a.start).localeCompare(b.date+b.start));
+  if (!list.length) { $("list").innerHTML = `<p class="empty">予定はありません</p>`; return; }
+  let html = "", last = "";
+  for (const e of list) {
+    if (e.date !== last) { html += `<div class="day num">${dayLabel(e.date)}${e.date===today ? "　今日" : ""}</div>`; last = e.date; }
+    html += `<button class="item" type="button" data-id="${e.id}"><span class="t num">${e.start}〜${e.end}</span><span>${esc(e.title)}</span></button>`;
+  }
+  $("list").innerHTML = html;
+}
+
+function resetClash() { $("clash").hidden = true; $("acts").hidden = false; $("err").hidden = true; }
+function open(ev) {
+  editId = ev ? ev.id : null;
+  $("formTitle").textContent = ev ? "予定を直す" : "予定を入れる";
+  $("save").textContent = ev ? "直す" : "入れる";
+  $("f-title").value = ev ? ev.title : "";
+  $("f-date").value = ev ? ev.date : ymd(new Date());
+  $("f-start").value = ev ? ev.start : "10:00";
+  $("f-end").value = ev ? ev.end : "11:00";
+  $("del").hidden = !ev; $("del").textContent = "この予定を消す"; $("del").dataset.armed = "";
+  resetClash(); $("sheet").hidden = false;
+}
+const close = () => { $("sheet").hidden = true; };
+
+$("form").addEventListener("submit", e => {
+  e.preventDefault();
+  const ev = { id: editId || ("e"+Date.now().toString(36)), title: $("f-title").value.trim(), date: $("f-date").value, start: $("f-start").value, end: $("f-end").value };
+  const msg = !ev.title ? "予定を入れてください" : !ev.date ? "日付を入れてください" : (!ev.start || !ev.end) ? "時刻を入れてください" : min(ev.end) <= min(ev.start) ? "おわりを、はじまりより後にしてください" : "";
+  if (msg) { $("err").textContent = msg; $("err").hidden = false; return; }
+  const c = overlaps(ev);
+  if (c.length) {
+    // ダブルブッキング：保存せず、やめるか直すかを選んでもらう
+    $("clash").innerHTML = `<b>ダブルブッキングです</b><ul>${c.map(o => `<li class="num">${o.start}〜${o.end}　${esc(o.title)}</li>`).join("")}</ul>
+      <div class="acts"><button class="btn ghost" type="button" id="c-stop">やめる</button><button class="btn" type="button" id="c-fix">時間を直す</button></div>`;
+    $("clash").hidden = false; $("acts").hidden = true; $("err").hidden = true;
+    $("c-stop").onclick = close;
+    $("c-fix").onclick = () => { resetClash(); $("f-start").focus(); };
+    return;
+  }
+  events = events.filter(o => o.id !== ev.id).concat(ev);
+  store(); close(); render();
+});
+["f-date","f-start","f-end"].forEach(id => $(id).addEventListener("input", resetClash));
+$("cancel").onclick = close;
+$("del").onclick = () => {
+  if ($("del").dataset.armed !== "1") { $("del").textContent = "もう一度押すと消します"; $("del").dataset.armed = "1"; return; }
+  events = events.filter(o => o.id !== editId); store(); close(); render();
+};
+$("sheet").addEventListener("click", e => { if (e.target === $("sheet")) close(); });
+$("addBtn").onclick = () => open(null);
+$("list").addEventListener("click", e => { const b = e.target.closest(".item"); if (b) open(events.find(x => x.id === b.dataset.id)); });
+render();
+if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
+</script>
+</body>
+</html>
